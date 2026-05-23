@@ -1,50 +1,45 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Self
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import Field, model_validator
 
+from app.schemas.base import Base
 from app.schemas.employee import EmployeeRead
+from app.schemas.constants import NAME_MAX_LENGTH, NAME_MIN_LENGTH
 
 
-class DepartmentCreate(BaseModel):
-    name: str = Field(..., min_length=1, max_length=200)
-    parent_id: Optional[int] = None
-
+class DepartmentBase(Base):
     @model_validator(mode="after")
-    def trim_name(self) -> "DepartmentCreate":
-        self.name = self.name.strip()
-        return self
-
-
-class DepartmentUpdate(BaseModel):
-    name: Optional[str] = Field(None, min_length=1, max_length=200)
-    parent_id: Optional[int] = None
-
-    @model_validator(mode="after")
-    def trim_name(self) -> "DepartmentUpdate":
+    def trim_name(self) -> Self:
         if self.name is not None:
             self.name = self.name.strip()
         return self
 
 
-class DepartmentRead(BaseModel):
+class DepartmentCreate(DepartmentBase):
+    name: str = Field(..., min_length=NAME_MIN_LENGTH, max_length=NAME_MAX_LENGTH)
+    parent_id: Optional[int] = None
+
+
+class DepartmentUpdate(DepartmentBase):
+    name: Optional[str] = Field(None, min_length=NAME_MIN_LENGTH, max_length=NAME_MAX_LENGTH)
+    parent_id: Optional[int] = None
+
+
+class DepartmentRead(Base):
     id: int
     name: str
     parent_id: Optional[int]
     created_at: datetime
 
-    model_config = {"from_attributes": True}
 
-
-class DepartmentDetail(BaseModel):
+class DepartmentDetail(Base):
     id: int
     name: str
     parent_id: Optional[int]
     created_at: datetime
-    employees: list[EmployeeRead] = []
-    children: list["DepartmentDetail"] = []
-
-    model_config = {"from_attributes": True}
+    employees: list[EmployeeRead] = Field(default_factory=list)
+    children: list["DepartmentDetail"] = Field(default_factory=list)
 
 
 DepartmentDetail.model_rebuild()

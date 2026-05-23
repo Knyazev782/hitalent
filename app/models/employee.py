@@ -10,6 +10,7 @@ from app.models.department import Department
 
 class Employee(Base):
     __tablename__ = "employees"
+    __table_args__ = ({"sqlite_autoincrement": True},)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     department_id: Mapped[int] = mapped_column(

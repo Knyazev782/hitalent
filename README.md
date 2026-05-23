@@ -1,11 +1,11 @@
- # API организационной структуры
+# API организационной структуры
 
 REST API для управления иерархической структурой подразделений и сотрудников.
 
 ## Стек
 
 - **FastAPI** — веб-фреймворк
-- **SQLAlchemy 2.0** — ORM
+- **SQLAlchemy 2.0** (async) — ORM
 - **PostgreSQL 16** — база данных
 - **Alembic** — миграции
 - **Docker / Docker Compose** — контейнеризация
@@ -14,7 +14,10 @@ REST API для управления иерархической структур
 
 ```bash
 git clone https://github.com/Knyazev782/hitalent
-docker-compose up --build
+cd hitalent
+cp .env.example .env
+# заполните .env актуальными значениями
+sudo docker compose up --build
 ```
 
 API будет доступно на: http://localhost:8000
@@ -33,17 +36,19 @@ API будет доступно на: http://localhost:8000
 
 ### Параметры GET /departments/{id}
 
-- `depth` (int, 0-5, по умолчанию 1) — глубина вложенных подразделений
+- `depth` (int, 0–5, по умолчанию 1) — глубина вложенных подразделений
 - `include_employees` (bool, по умолчанию true) — включать ли список сотрудников
 
 ### Параметры DELETE /departments/{id}
 
 - `mode` — `cascade` (удалить всё) или `reassign` (перенести сотрудников)
-- `reassign_to_department_id` — обязателен при mode=reassign
+- `reassign_to_department_id` — обязателен при `mode=reassign`
 
 ## Запуск тестов (локально)
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 pytest -v
 ```
@@ -52,13 +57,22 @@ pytest -v
 
 ```
 app/
-  main.py          # FastAPI application
-  config.py        # Settings (pydantic-settings)
-  database.py      # SQLAlchemy engine + session
-  models/          # Department, Employee
-  schemas/         # Pydantic schemas
-  routers/         # API endpoints
-  services/        # Business logic
-migrations/        # Alembic migrations
-tests/             # pytest tests
+  main.py              # FastAPI application, lifespan
+  config.py            # Settings (pydantic-settings, из .env)
+  database.py          # async engine + AsyncSession
+  models/              # SQLAlchemy модели (Department, Employee)
+  schemas/             # Pydantic-схемы, константы валидации
+  routers/             # API-эндпоинты
+  services/            # Бизнес-логика, константы ошибок
+migrations/            # Alembic миграции
+tests/                 # pytest-asyncio тесты
 ```
+
+## Переменные окружения
+
+| Переменная | Описание | Пример |
+|---|---|---|
+| `DATABASE_URL` | Async PostgreSQL URL | `postgresql+asyncpg://postgres:postgres@db:5432/hitalent` |
+| `POSTGRES_USER` | Пользователь PostgreSQL | `postgres` |
+| `POSTGRES_PASSWORD` | Пароль PostgreSQL | `postgres` |
+| `POSTGRES_DB` | Имя базы данных | `hitalent` |

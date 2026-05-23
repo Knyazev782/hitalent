@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -19,16 +19,18 @@ from app.services import (
     get_department_detail,
     update_department,
 )
+from app.schemas.constants import DEPTH_DEFAULT, DEPTH_MAX, DEPTH_MIN
+from app.services.constants import DeleteMode
 
 router = APIRouter(prefix="/departments", tags=["departments"])
 
 
-@router.post("/", response_model=DepartmentRead, status_code=201)
+@router.post("/", response_model=DepartmentRead, status_code=status.HTTP_201_CREATED)
 async def api_create_department(data: DepartmentCreate, db: AsyncSession = Depends(get_db)):
     return await create_department(db, data)
 
 
-@router.post("/{department_id}/employees/", response_model=EmployeeRead, status_code=201)
+@router.post("/{department_id}/employees/", response_model=EmployeeRead, status_code=status.HTTP_201_CREATED)
 async def api_create_employee(
     department_id: int, data: EmployeeCreate, db: AsyncSession = Depends(get_db)
 ):
@@ -38,7 +40,7 @@ async def api_create_employee(
 @router.get("/{department_id}", response_model=DepartmentDetail)
 async def api_get_department(
     department_id: int,
-    depth: int = Query(1, ge=0, le=5),
+    depth: int = Query(DEPTH_DEFAULT, ge=DEPTH_MIN, le=DEPTH_MAX),
     include_employees: bool = Query(True),
     db: AsyncSession = Depends(get_db),
 ):
@@ -52,10 +54,10 @@ async def api_update_department(
     return await update_department(db, department_id, data)
 
 
-@router.delete("/{department_id}", status_code=204)
+@router.delete("/{department_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def api_delete_department(
     department_id: int,
-    mode: str = Query("cascade", pattern="^(cascade|reassign)$"),
+    mode: DeleteMode = Query(DeleteMode.CASCADE),
     reassign_to_department_id: Optional[int] = Query(None),
     db: AsyncSession = Depends(get_db),
 ) -> None:

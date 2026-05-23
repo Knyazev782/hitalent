@@ -9,6 +9,7 @@ from app.database import Base
 
 class Department(Base):
     __tablename__ = "departments"
+    __table_args__ = ({"sqlite_autoincrement": True},)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)

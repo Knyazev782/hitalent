@@ -1,9 +1,3 @@
-"""initial tables
-
-Revision ID: 001
-Revises:
-Create Date: 2026-05-20 00:00:00.000000
-"""
 from typing import Sequence, Union
 
 from alembic import op

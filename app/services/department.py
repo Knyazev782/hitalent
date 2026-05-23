@@ -1,16 +1,30 @@
 from collections import deque
 from typing import Optional
 
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Department, Employee
 from app.schemas import DepartmentCreate, DepartmentUpdate
+from app.schemas.constants import DEPTH_DEFAULT
+from app.services.constants import (
+    CYCLE_DETECTED,
+    DEPARTMENT_NOT_FOUND,
+    DeleteMode,
+    NEW_PARENT_NOT_FOUND,
+    PARENT_NOT_FOUND,
+    REASSIGN_INSIDE_SUBTREE,
+    REASSIGN_REQUIRED,
+    REASSIGN_TO_SELF,
+    ROOT_PARENT_ID,
+    SELF_PARENT,
+    TARGET_DEPARTMENT_NOT_FOUND,
+    duplicate_name_msg,
+)
 
 
 async def _collect_subtree_ids(db: AsyncSession, department_id: int) -> set[int]:
-    """Собирает все ID подразделений в поддереве, включая корень."""
     ids: set[int] = {department_id}
     queue: deque[int] = deque([department_id])
     while queue:
@@ -27,10 +41,10 @@ async def _collect_subtree_ids(db: AsyncSession, department_id: int) -> set[int]
 
 
 async def create_department(db: AsyncSession, data: DepartmentCreate) -> Department:
-    if data.parent_id is not None and data.parent_id != 0:
+    if data.parent_id is not None and data.parent_id != ROOT_PARENT_ID:
         parent: Optional[Department] = await db.get(Department, data.parent_id)
-        if parent is None:
-            raise HTTPException(status_code=404, detail="Родительское подразделение не найдено")
+        if not parent:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=PARENT_NOT_FOUND)
     else:
         data.parent_id = None
 
@@ -41,10 +55,10 @@ async def create_department(db: AsyncSession, data: DepartmentCreate) -> Departm
         )
     )
     existing: Optional[Department] = result.scalar_one_or_none()
-    if existing is not None:
+    if existing:
         raise HTTPException(
-            status_code=409,
-            detail=f"Подразделение с именем '{data.name}' уже существует в данном родителе",
+            status_code=status.HTTP_409_CONFLICT,
+            detail=duplicate_name_msg(data.name),
         )
 
     department: Department = Department(name=data.name, parent_id=data.parent_id)
@@ -57,35 +71,35 @@ async def create_department(db: AsyncSession, data: DepartmentCreate) -> Departm
 async def update_department(db: AsyncSession, department_id: int, data: DepartmentUpdate) -> Department:
     department: Optional[Department] = await db.get(Department, department_id)
     if department is None:
-        raise HTTPException(status_code=404, detail="Подразделение не найдено")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=DEPARTMENT_NOT_FOUND)
 
     if data.name is not None:
         department.name = data.name
 
     parent_changed: bool = False
-    if data.parent_id is not None and data.parent_id != 0:
+    if data.parent_id is not None and data.parent_id != ROOT_PARENT_ID:
         if data.parent_id == department_id:
             raise HTTPException(
-                status_code=400,
-                detail="Подразделение не может быть родителем самого себя",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=SELF_PARENT,
             )
 
         new_parent: Optional[Department] = await db.get(Department, data.parent_id)
         if new_parent is None:
             raise HTTPException(
-                status_code=404, detail="Новое родительское подразделение не найдено"
+                status_code=status.HTTP_404_NOT_FOUND, detail=NEW_PARENT_NOT_FOUND
             )
 
         subtree_ids: set[int] = await _collect_subtree_ids(db, department_id)
         if data.parent_id in subtree_ids:
             raise HTTPException(
-                status_code=409,
-                detail="Нельзя переместить подразделение в собственное поддерево (обнаружен цикл)",
+                status_code=status.HTTP_409_CONFLICT,
+                detail=CYCLE_DETECTED,
             )
 
         department.parent_id = data.parent_id
         parent_changed = True
-    elif data.parent_id is None or data.parent_id == 0:
+    elif data.parent_id is None or data.parent_id == ROOT_PARENT_ID:
         if "parent_id" in data.model_fields_set:
             department.parent_id = None
             parent_changed = True
@@ -101,8 +115,8 @@ async def update_department(db: AsyncSession, department_id: int, data: Departme
         existing: Optional[Department] = result.scalar_one_or_none()
         if existing is not None:
             raise HTTPException(
-                status_code=409,
-                detail=f"Подразделение с именем '{department.name}' уже существует в данном родителе",
+                status_code=status.HTTP_409_CONFLICT,
+                detail=duplicate_name_msg(department.name),
             )
 
     await db.commit()
@@ -116,7 +130,6 @@ async def _build_department_tree(
     depth: int,
     include_employees: bool,
 ) -> dict:
-    """Рекурсивно строит дерево подразделений до указанной глубины."""
     result: dict = {
         "id": department.id,
         "name": department.name,
@@ -161,12 +174,12 @@ async def _build_department_tree(
 async def get_department_detail(
     db: AsyncSession,
     department_id: int,
-    depth: int = 1,
+    depth: int = DEPTH_DEFAULT,
     include_employees: bool = True,
 ) -> dict:
     department: Optional[Department] = await db.get(Department, department_id)
     if department is None:
-        raise HTTPException(status_code=404, detail="Подразделение не найдено")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=DEPARTMENT_NOT_FOUND)
 
     return await _build_department_tree(db, department, depth, include_employees)
 
@@ -174,35 +187,35 @@ async def get_department_detail(
 async def delete_department(
     db: AsyncSession,
     department_id: int,
-    mode: str,
+    mode: DeleteMode,
     reassign_to_department_id: Optional[int] = None,
 ) -> None:
     department: Optional[Department] = await db.get(Department, department_id)
     if department is None:
-        raise HTTPException(status_code=404, detail="Подразделение не найдено")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=DEPARTMENT_NOT_FOUND)
 
     subtree_ids: set[int] = await _collect_subtree_ids(db, department_id)
 
-    if mode == "reassign":
+    if mode == DeleteMode.REASSIGN:
         if reassign_to_department_id is None:
             raise HTTPException(
-                status_code=400,
-                detail="При режиме reassign необходимо указать reassign_to_department_id",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=REASSIGN_REQUIRED,
             )
         if reassign_to_department_id in subtree_ids:
             raise HTTPException(
-                status_code=400,
-                detail="Целевое подразделение для переноса находится внутри удаляемого поддерева",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=REASSIGN_INSIDE_SUBTREE,
             )
         target: Optional[Department] = await db.get(Department, reassign_to_department_id)
         if target is None:
             raise HTTPException(
-                status_code=404, detail="Целевое подразделение для переноса не найдено"
+                status_code=status.HTTP_404_NOT_FOUND, detail=TARGET_DEPARTMENT_NOT_FOUND
             )
         if reassign_to_department_id == department_id:
             raise HTTPException(
-                status_code=400,
-                detail="Нельзя перенести сотрудников в удаляемое подразделение",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=REASSIGN_TO_SELF,
             )
 
         await db.execute(
